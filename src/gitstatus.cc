@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with GitStatus. If not, see <https://www.gnu.org/licenses/>.
 
+#include <signal.h>
 #include <time.h>
 
 #include <cstddef>
@@ -150,8 +151,45 @@ void ProcessRequest(const Options& opts, RepoCache& cache, Request req) {
   resp.Dump("with git status");
 }
 
+char* StrAppend(char* out, const char* s) {
+  while (*s) *out++ = *s++;
+  return out;
+}
+
+char* StrAppend(char* out, uint64_t n) {
+  char* p = out;
+  do {
+    *p++ = '0' + n % 10;
+    n /= 10;
+  } while (n);
+  char* res = p;
+  while (p - out > 1) {
+    std::swap(*out++, *--p);
+  }
+  return res;
+}
+
+template <int Signal>
+void Trap() {
+  struct sigaction act = {};
+  act.sa_sigaction = +[](int sig, siginfo_t* info, void* ucontext) {
+    char msg[64] = {};
+    char* p = StrAppend(msg, "Received signal ");
+    p = StrAppend(p, Signal);
+    p = StrAppend(p, " from pid ");
+    p = StrAppend(p, info->si_pid);
+    p = StrAppend(p, ".\n");
+    ssize_t n = write(fileno(stderr), msg, p - msg);
+    static_cast<void>(n);
+    _exit(Signal + 128);
+  };
+  act.sa_flags = SA_SIGINFO;
+  CHECK(!sigaction(Signal, &act, nullptr)) << Errno();
+}
+
 int GitStatus(int argc, char** argv) {
   tzset();
+  Trap<SIGTERM>();
   Options opts = ParseOptions(argc, argv);
   g_min_log_level = opts.log_level;
   for (int i = 0; i != argc; ++i) LOG(INFO) << "argv[" << i << "]: " << Print(argv[i]);
